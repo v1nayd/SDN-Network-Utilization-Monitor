@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SDN Network Utilization Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root {
+    --bg:       #0d0f14;
+    --surface:  #161921;
+    --card:     #1e2230;
+    --border:   #2a2f3d;
+    --accent:   #4f8ef7;
+    --accent2:  #22c7a0;
+    --warn:     #f7a84f;
+    --danger:   #f75a5a;
+    --text:     #e8eaf0;
+    --muted:    #6b7080;
+    --font:     'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    min-height: 100vh;
+  }
+
+  /* ── header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px; color: #fff;
+  }
+  .title { font-size: 15px; font-weight: 600; letter-spacing: .5px; }
+  .subtitle { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent2); display: inline-block;
+    box-shadow: 0 0 6px var(--accent2);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .status-label { font-size: 11px; color: var(--accent2); margin-left: 6px; }
+  .last-update { font-size: 11px; color: var(--muted); }
+
+  /* ── main layout ── */
+  .main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+
+  /* ── API config bar ── */
+  .config-bar {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin-bottom: 20px;
+  }
+  .config-bar label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .config-bar input {
+    flex: 1; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-family: var(--font);
+    font-size: 12px; padding: 5px 10px; outline: none;
+    transition: border-color .2s;
+  }
+  .config-bar input:focus { border-color: var(--accent); }
+  .btn {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; padding: 6px 14px; font-size: 12px;
+    font-family: var(--font); cursor: pointer; white-space: nowrap;
+    transition: opacity .15s;
+  }
+  .btn:hover { opacity: .85; }
+  .btn.outline {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .btn.outline:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── kpi row ── */
+  .kpi-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 20px; }
+  .kpi {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .kpi-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
+  .kpi-value { font-size: 26px; font-weight: 700; margin-top: 4px; line-height: 1; }
+  .kpi-unit  { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .kpi.accent  .kpi-value { color: var(--accent); }
+  .kpi.accent2 .kpi-value { color: var(--accent2); }
+  .kpi.warn    .kpi-value { color: var(--warn); }
+  .kpi.danger  .kpi-value { color: var(--danger); }
+
+  /* ── grid ── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+
+  /* ── panel ── */
+  .panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .panel-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .9px;
+    color: var(--muted); margin-bottom: 14px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-title span { color: var(--text); font-size: 12px; text-transform: none; letter-spacing: 0; }
+
+  /* ── chart wrappers ── */
+  .chart-wrap { position: relative; width: 100%; }
+
+  /* ── port table ── */
+  .port-table { width: 100%; border-collapse: collapse; }
+  .port-table th {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .7px;
+    color: var(--muted); text-align: left; padding: 0 8px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .port-table td {
+    padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,.03);
+    font-size: 12px;
+  }
+  .port-table tr:last-child td { border-bottom: none; }
+  .port-table tr:hover td { background: rgba(255,255,255,.02); }
+  .util-bar-wrap { display: flex; align-items: center; gap: 8px; }
+  .util-bar-bg {
+    flex: 1; height: 6px; border-radius: 3px; background: var(--surface);
+    overflow: hidden;
+  }
+  .util-bar-fill {
+    height: 100%; border-radius: 3px; transition: width .4s ease;
+  }
+  .badge {
+    display: inline-block; padding: 2px 7px; border-radius: 4px;
+    font-size: 10px; font-weight: 600;
+  }
+  .badge.up   { background: rgba(34,199,160,.15); color: var(--accent2); }
+  .badge.down { background: rgba(247,90,90,.15);  color: var(--danger); }
+
+  /* ── topology visual ── */
+  .topo-svg { width: 100%; height: 200px; }
+
+  /* ── log panel ── */
+  .log-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px;
+    font-size: 11px; color: var(--muted); height: 130px;
+    overflow-y: auto; line-height: 1.8;
+  }
+  .log-line { border-bottom: none; }
+  .log-line .ts  { color: var(--accent);  margin-right: 8px; }
+  .log-line .msg { color: var(--text); }
+  .log-line .ok  { color: var(--accent2); }
+  .log-line .err { color: var(--danger); }
+
+  /* ── demo mode banner ── */
+  .demo-banner {
+    background: rgba(79,142,247,.1); border: 1px solid rgba(79,142,247,.3);
+    border-radius: 8px; padding: 8px 14px; margin-bottom: 16px;
+    font-size: 11px; color: var(--accent); display: flex; align-items: center; gap: 8px;
+  }
+  .demo-banner strong { color: #fff; }
+
+  @media (max-width: 900px) {
+    .kpi-row { grid-template-columns: 1fr 1fr; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── header ── -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">SDN</div>
+    <div>
+      <div class="title">Network Utilization Monitor</div>
+      <div class="subtitle">OpenFlow / Ryu Controller · Mininet Simulation</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span class="status-dot" id="statusDot"></span>
+    <span class="status-label" id="statusLabel">connecting…</span>
+    <span class="last-update" id="lastUpdate">—</span>
+  </div>
+</div>
+
+<!-- ── main ── -->
+<div class="main">
+
+  <!-- API config bar -->
+  <div class="config-bar">
+    <label>Controller stats API:</label>
+    <input type="text" id="apiUrl" value="http://127.0.0.1:8080/stats/all"
+           placeholder="http://127.0.0.1:8080/stats/all" />
+    <button class="btn" onclick="setApiUrl()">Connect</button>
+    <button class="btn outline" onclick="loadDemo()">Load demo data</button>
+  </div>
+
+  <!-- demo banner (hidden by default) -->
+  <div class="demo-banner" id="demoBanner" style="display:none;">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="flex-shrink:0">
+      <circle cx="8" cy="8" r="7" stroke="#4f8ef7" stroke-width="1.5"/>
+      <path d="M8 7v4M8 5v.5" stroke="#4f8ef7" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+    <span><strong>Demo mode</strong> — simulated traffic data. Connect to a live Ryu controller for real metrics.</span>
+  </div>
+
+  <!-- KPI row -->
+  <div class="kpi-row">
+    <div class="kpi accent">
+      <div class="kpi-label">Peak TX</div>
+      <div class="kpi-value" id="kpiPeakTx">—</div>
+      <div class="kpi-unit">Mbps</div>
+    </div>
+    <div class="kpi accent2">
+      <div class="kpi-label">Peak RX</div>
+      <div class="kpi-value" id="kpiPeakRx">—</div>
+      <div class="kpi-unit">Mbps</div>
+    </div>
+    <div class="kpi warn">
+      <div class="kpi-label">Avg utilisation</div>
+      <div class="kpi-value" id="kpiAvgUtil">—</div>
+      <div class="kpi-unit">% of 10 Mbps link</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Active ports</div>
+      <div class="kpi-value" id="kpiPorts" style="color:var(--text)">—</div>
+      <div class="kpi-unit">across all switches</div>
+    </div>
+  </div>
+
+  <!-- charts row -->
+  <div class="grid-2" style="margin-bottom:16px;">
+    <div class="panel">
+      <div class="panel-title">TX bandwidth over time<span id="txChartLegend"></span></div>
+      <div class="chart-wrap" style="height:200px"><canvas id="txChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">RX bandwidth over time<span id="rxChartLegend"></span></div>
+      <div class="chart-wrap" style="height:200px"><canvas id="rxChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- port table + topology -->
+  <div class="grid-2" style="margin-bottom:16px;">
+
+    <div class="panel">
+      <div class="panel-title">Port utilisation table</div>
+      <table class="port-table">
+        <thead>
+          <tr>
+            <th>Switch</th><th>Port</th>
+            <th>TX Mbps</th><th>TX util</th>
+            <th>RX Mbps</th><th>RX util</th>
+          </tr>
+        </thead>
+        <tbody id="portTableBody">
+          <tr><td colspan="6" style="color:var(--muted);padding:20px 8px;text-align:center">
+            Waiting for data…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Topology</div>
+      <svg class="topo-svg" id="topoSvg" viewBox="0 0 400 200"></svg>
+      <div style="margin-top:12px">
+      <div class="panel-title" style="margin-bottom:8px">Event log</div>
+      <div class="log-box" id="logBox"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- byte counter bar chart -->
+  <div class="panel" style="margin-bottom:16px;">
+    <div class="panel-title">Cumulative bytes per port</div>
+    <div class="chart-wrap" style="height:180px"><canvas id="byteChart"></canvas></div>
+  </div>
+
+</div><!-- /main -->
+
+<script>
+// ── state ────────────────────────────────────────────────────────
+const CAPACITY_MBPS = 10;
+const MAX_HISTORY   = 30;       // points kept on sparkline charts
+const POLL_MS       = 2000;
+
+let apiUrl      = "http://127.0.0.1:8080/stats/all";
+let demoMode    = false;
+let pollTimer   = null;
+
+// history arrays indexed by label (e.g. "s1:p1")
+const txHistory = {};
+const rxHistory = {};
+const timeLabels = [];
+
+// ── Chart.js instances ────────────────────────────────────────────
+const COLORS = ["#4f8ef7","#22c7a0","#f7a84f","#f75a5a","#b56ef7","#54c7f7"];
+
+function mkLineChart(id) {
+  return new Chart(document.getElementById(id), {
+    type: "line",
+    data: { labels: [], datasets: [] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      plugins: { legend: { display: false }, tooltip: { mode: "index", intersect: false } },
+      scales: {
+        x: { ticks: { color: "#6b7080", font: { size: 10 }, maxTicksLimit: 8 },
+             grid: { color: "rgba(255,255,255,.04)" } },
+        y: { beginAtZero: true, max: CAPACITY_MBPS,
+             ticks: { color: "#6b7080", font: { size: 10 }, callback: v => v + "M" },
+             grid: { color: "rgba(255,255,255,.06)" } },
+      },
+    },
+  });
+}
+
+function mkBarChart(id) {
+  return new Chart(document.getElementById(id), {
+    type: "bar",
+    data: { labels: [], datasets: [
+      { label: "TX bytes", data: [], backgroundColor: "#4f8ef780" },
+      { label: "RX bytes", data: [], backgroundColor: "#22c7a080" },
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#6b7080", font: { size: 10 } },
+             grid: { color: "rgba(255,255,255,.04)" } },
+        y: { beginAtZero: true,
+             ticks: { color: "#6b7080", font: { size: 10 },
+                      callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+"M" : v >= 1e3 ? (v/1e3).toFixed(0)+"K" : v },
+             grid: { color: "rgba(255,255,255,.06)" } },
+      },
+    },
+  });
+}
+
+const txChart   = mkLineChart("txChart");
+const rxChart   = mkLineChart("rxChart");
+const byteChart = mkBarChart("byteChart");
+
+// ── topology SVG (static 3-switch chain) ──────────────────────────
+function drawTopology() {
+  const svg = document.getElementById("topoSvg");
+  const W = 400, H = 200;
+
+  // switches: s1 s2 s3 horizontal
+  const switches = [
+    { id: "s1", x: 80,  y: 100 },
+    { id: "s2", x: 200, y: 100 },
+    { id: "s3", x: 320, y: 100 },
+  ];
+  const hosts = [
+    { id:"h1", x:35,  y:60,  sw:"s1" },
+    { id:"h2", x:35,  y:140, sw:"s1" },
+    { id:"h3", x:160, y:50,  sw:"s2" },
+    { id:"h4", x:160, y:150, sw:"s2" },
+    { id:"h5", x:365, y:60,  sw:"s3" },
+    { id:"h6", x:365, y:140, sw:"s3" },
+  ];
+
+  let html = `<defs>
+    <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="#2a2f3d"/>
+    </marker></defs>`;
+
+  // backbone links
+  html += `<line x1="80" y1="100" x2="200" y2="100" stroke="#2a2f3d" stroke-width="2"/>`;
+  html += `<line x1="200" y1="100" x2="320" y2="100" stroke="#2a2f3d" stroke-width="2"/>`;
+
+  // host links
+  hosts.forEach(h => {
+    const sw = switches.find(s => s.id === h.sw);
+    html += `<line x1="${h.x}" y1="${h.y}" x2="${sw.x}" y2="${sw.y}" stroke="#1e2230" stroke-width="1.5"/>`;
+  });
+
+  // switches
+  switches.forEach(s => {
+    html += `<rect x="${s.x-20}" y="${s.y-14}" width="40" height="28" rx="5" fill="#4f8ef7" fill-opacity=".15" stroke="#4f8ef7" stroke-width="1"/>`;
+    html += `<text x="${s.x}" y="${s.y+4}" text-anchor="middle" fill="#4f8ef7" font-size="11" font-family="monospace">${s.id}</text>`;
+  });
+
+  // hosts
+  hosts.forEach(h => {
+    html += `<rect x="${h.x-12}" y="${h.y-10}" width="24" height="20" rx="4" fill="#22c7a0" fill-opacity=".12" stroke="#22c7a0" stroke-width="1"/>`;
+    html += `<text x="${h.x}" y="${h.y+4}" text-anchor="middle" fill="#22c7a0" font-size="9" font-family="monospace">${h.id}</text>`;
+  });
+
+  // controller (top centre)
+  html += `<rect x="165" y="4" width="70" height="22" rx="5" fill="#f7a84f" fill-opacity=".15" stroke="#f7a84f" stroke-width="1"/>`;
+  html += `<text x="200" y="19" text-anchor="middle" fill="#f7a84f" font-size="10" font-family="monospace">Ryu ctrl</text>`;
+  // dashed lines to all switches
+  switches.forEach(s => {
+    html += `<line x1="200" y1="26" x2="${s.x}" y2="${s.y-14}" stroke="#f7a84f" stroke-width="1" stroke-dasharray="4,3" stroke-opacity=".5"/>`;
+  });
+
+  svg.innerHTML = html;
+}
+drawTopology();
+
+// ── colour for a port label ────────────────────────────────────────
+let colorIndex = 0;
+const colorMap = {};
+function colorFor(label) {
+  if (!colorMap[label]) colorMap[label] = COLORS[colorIndex++ % COLORS.length];
+  return colorMap[label];
+}
+
+// ── update charts from flat rows [{label,tx_mbps,rx_mbps,tx_bytes,rx_bytes}] ──
+function updateCharts(rows, tsLabel) {
+  // push time label
+  timeLabels.push(tsLabel);
+  if (timeLabels.length > MAX_HISTORY) timeLabels.shift();
+
+  rows.forEach(r => {
+    if (!txHistory[r.label]) { txHistory[r.label] = []; rxHistory[r.label] = []; }
+    txHistory[r.label].push(r.tx_mbps);
+    rxHistory[r.label].push(r.rx_mbps);
+    if (txHistory[r.label].length > MAX_HISTORY) { txHistory[r.label].shift(); rxHistory[r.label].shift(); }
+  });
+
+  const labels = Object.keys(txHistory);
+
+  // line charts
+  [txChart, rxChart].forEach((chart, isTx) => {
+    chart.data.labels = [...timeLabels];
+    chart.data.datasets = labels.map(lbl => ({
+      label: lbl,
+      data: isTx ? [...txHistory[lbl]] : [...rxHistory[lbl]],
+      borderColor: colorFor(lbl),
+      backgroundColor: colorFor(lbl) + "22",
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.4,
+      fill: false,
+    }));
+    chart.update("none");
+  });
+
+  // byte bar chart
+  byteChart.data.labels = rows.map(r => r.label);
+  byteChart.data.datasets[0].data = rows.map(r => r.tx_bytes);
+  byteChart.data.datasets[1].data = rows.map(r => r.rx_bytes);
+  byteChart.update("none");
+}
+
+// ── port table ─────────────────────────────────────────────────────
+function updateTable(rows) {
+  const tbody = document.getElementById("portTableBody");
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--muted);padding:20px 8px;text-align:center">No port data yet</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const txPct = Math.min(r.tx_mbps / CAPACITY_MBPS * 100, 100);
+    const rxPct = Math.min(r.rx_mbps / CAPACITY_MBPS * 100, 100);
+    const txCol = txPct > 80 ? "#f75a5a" : txPct > 50 ? "#f7a84f" : "#22c7a0";
+    const rxCol = rxPct > 80 ? "#f75a5a" : rxPct > 50 ? "#f7a84f" : "#4f8ef7";
+    return `<tr>
+      <td>${r.sw}</td>
+      <td>${r.port}</td>
+      <td style="color:${txCol}">${r.tx_mbps.toFixed(2)}</td>
+      <td>
+        <div class="util-bar-wrap">
+          <div class="util-bar-bg"><div class="util-bar-fill" style="width:${txPct.toFixed(1)}%;background:${txCol}"></div></div>
+          <span style="font-size:10px;color:${txCol};min-width:34px">${txPct.toFixed(0)}%</span>
+        </div>
+      </td>
+      <td style="color:${rxCol}">${r.rx_mbps.toFixed(2)}</td>
+      <td>
+        <div class="util-bar-wrap">
+          <div class="util-bar-bg"><div class="util-bar-fill" style="width:${rxPct.toFixed(1)}%;background:${rxCol}"></div></div>
+          <span style="font-size:10px;color:${rxCol};min-width:34px">${rxPct.toFixed(0)}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+// ── KPI row ────────────────────────────────────────────────────────
+function updateKpis(rows) {
+  const txVals = rows.map(r => r.tx_mbps);
+  const rxVals = rows.map(r => r.rx_mbps);
+  const allUtil = rows.map(r => Math.max(r.tx_mbps, r.rx_mbps) / CAPACITY_MBPS * 100);
+  document.getElementById("kpiPeakTx").textContent = Math.max(...txVals, 0).toFixed(2);
+  document.getElementById("kpiPeakRx").textContent = Math.max(...rxVals, 0).toFixed(2);
+  document.getElementById("kpiAvgUtil").textContent = allUtil.length
+    ? (allUtil.reduce((a,b)=>a+b,0)/allUtil.length).toFixed(1) : "—";
+  document.getElementById("kpiPorts").textContent = rows.length;
+}
+
+// ── log ────────────────────────────────────────────────────────────
+function addLog(msg, cls = "") {
+  const box = document.getElementById("logBox");
+  const ts  = new Date().toLocaleTimeString("en-GB", {hour12:false});
+  const div = document.createElement("div");
+  div.className = "log-line";
+  div.innerHTML = `<span class="ts">[${ts}]</span><span class="msg ${cls}">${msg}</span>`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  if (box.children.length > 100) box.removeChild(box.firstChild);
+}
+
+// ── parse API response → rows ──────────────────────────────────────
+function parseApiData(data) {
+  const rows = [];
+  for (const [dpidStr, ports] of Object.entries(data)) {
+    const sw = "s" + (parseInt(dpidStr) || dpidStr);
+    for (const [portStr, stat] of Object.entries(ports)) {
+      const pno = parseInt(portStr);
+      if (pno >= 0xfffffff0) continue;   // skip internal pseudo-ports
+      rows.push({
+        label:    `${sw}:p${pno}`,
+        sw,
+        port:     `p${pno}`,
+        tx_mbps:  stat.tx_mbps   || 0,
+        rx_mbps:  stat.rx_mbps   || 0,
+        tx_bytes: stat.tx_bytes  || 0,
+        rx_bytes: stat.rx_bytes  || 0,
+      });
+    }
+  }
+  return rows.sort((a,b) => a.label.localeCompare(b.label));
+}
+
+// ── set status indicator ───────────────────────────────────────────
+function setStatus(ok, text) {
+  const dot   = document.getElementById("statusDot");
+  const label = document.getElementById("statusLabel");
+  dot.style.background   = ok ? "var(--accent2)" : "var(--danger)";
+  dot.style.boxShadow    = `0 0 6px ${ok ? "var(--accent2)" : "var(--danger)"}`;
+  label.style.color      = ok ? "var(--accent2)" : "var(--danger)";
+  label.textContent      = text;
+}
+
+// ── fetch real data ────────────────────────────────────────────────
+async function fetchStats() {
+  try {
+    const res  = await fetch(apiUrl, {mode:"cors"});
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const rows = parseApiData(data);
+    const tsLabel = new Date().toLocaleTimeString("en-GB",{hour12:false});
+    updateKpis(rows);
+    updateTable(rows);
+    updateCharts(rows, tsLabel);
+    setStatus(true, "live");
+    document.getElementById("lastUpdate").textContent = "updated " + tsLabel;
+    document.getElementById("demoBanner").style.display = "none";
+    demoMode = false;
+    addLog(`Polled ${Object.keys(data).length} switch(es), ${rows.length} ports`, "ok");
+  } catch (e) {
+    setStatus(false, "offline");
+    addLog(`Fetch failed: ${e.message}. Using demo data.`, "err");
+    loadDemo(false);
+  }
+}
+
+// ── demo data generator ────────────────────────────────────────────
+let demoTick = 0;
+function loadDemo(log = true) {
+  demoMode = true;
+  document.getElementById("demoBanner").style.display = "flex";
+  setStatus(false, "demo");
+
+  // simulate 3 switches × 3 ports
+  const switches  = ["1","2","3"];
+  const ports     = [1, 2, 3];
+  const fakeData  = {};
+  switches.forEach((sw, si) => {
+    fakeData[sw] = {};
+    ports.forEach((p, pi) => {
+      const phase  = (si * 3 + pi) * 1.1;
+      const base   = [2.5, 1.2, 4.0][pi];
+      const noise  = () => (Math.random() - .5) * .4;
+      const tx     = Math.max(0, base + Math.sin(demoTick * .2 + phase) * 1.5 + noise());
+      const rx     = Math.max(0, base * .8 + Math.cos(demoTick * .25 + phase + .5) * 1.2 + noise());
+      fakeData[sw][p] = {
+        tx_mbps: parseFloat(tx.toFixed(3)),
+        rx_mbps: parseFloat(rx.toFixed(3)),
+        tx_bytes: 1_200_000 + si * 400_000 + pi * 120_000 + demoTick * 30_000,
+        rx_bytes: 900_000  + si * 300_000 + pi * 90_000  + demoTick * 22_000,
+        tx_packets: 8000 + demoTick * 200,
+        rx_packets: 6000 + demoTick * 150,
+        tx_errors: 0, rx_errors: 0,
+        timestamp: Date.now() / 1000,
+      };
+    });
+  });
+
+  demoTick++;
+  const rows = parseApiData(fakeData);
+  const tsLabel = new Date().toLocaleTimeString("en-GB",{hour12:false});
+  updateKpis(rows);
+  updateTable(rows);
+  updateCharts(rows, tsLabel);
+  document.getElementById("lastUpdate").textContent = "demo tick " + demoTick;
+  if (log) addLog("Demo data loaded — simulated 3-switch topology", "ok");
+}
+
+// ── polling loop ───────────────────────────────────────────────────
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  fetchStats();
+  pollTimer = setInterval(() => {
+    if (demoMode) loadDemo(false); else fetchStats();
+  }, POLL_MS);
+}
+
+function setApiUrl() {
+  apiUrl   = document.getElementById("apiUrl").value.trim();
+  demoMode = false;
+  addLog("Connecting to " + apiUrl + "…");
+  fetchStats();
+}
+
+// ── boot ─────────────────────────────────────────────────────────
+window.addEventListener("DOMContentLoaded", () => {
+  addLog("Dashboard initialised", "ok");
+  addLog("Attempting connection to Ryu stats API…");
+  startPolling();
+});
+</script>
+</body>
+</html>
