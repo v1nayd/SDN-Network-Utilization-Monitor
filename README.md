@@ -12,13 +12,12 @@ A fully functional SDN-based network monitoring solution that:
 ## Repository Structure
 
 ```
-network_monitor/
-├── controller/
-│   └── monitor_controller.py   # Ryu app (L2 learning switch + stats monitor)
-├── topology/
-│   └── topology.py             # Mininet 3-switch linear topology
-├── dashboard/
-│   └── index.html              # Browser dashboard (Chart.js, no build step)
+SDN-Network-Utilization-Monitor/
+├── monitor_controller.py   # Ryu app (L2 learning switch + stats monitor)
+├── topology.py             # Mininet 3-switch linear topology
+├── index.html              # Browser dashboard (Chart.js, no build step)
+├── _pycache_
+├── Outputs
 └── README.md
 ```
 
@@ -142,106 +141,45 @@ mininet> pingall
 Expected: 0% packet loss.
 Observe flow tables:
 ```bash
-sudo ovs-ofctl -O OpenFlow13 dump-flows s1
+sh ovs-ofctl -O OpenFlow13 dump-flows s1
 ```
 
-### Scenario 2 – Bandwidth (TCP iperf)
+### Scenario 2 – Bandwidth Measurement (iperf)
 
 ```
-mininet> iperf h1 h5
+mininet> h1 iperf -s &
+mininet> h3 iperf -s &
+mininet> h5 iperf -s &
+mininet> h2 iperf -c 10.0.0.1 -t 3600 &
+mininet> h4 iperf -c 10.0.0.3 -t 3600 &
+mininet> h6 iperf -c 10.0.0.5 -t 3600 &
+
 ```
 
 Expected: throughput close to 10 Mbps (link capacity).
 Dashboard TX/RX bars for the relevant ports should spike.
 
-### Scenario 3 – Bandwidth (UDP iperf)
-
-```
-mininet> h1 iperf -u -c 10.0.0.5 -b 8M -t 15 &
-mininet> h5 iperf -u -s &
-```
-
-Check flow table changes and packet counters in the dashboard.
-
-### Scenario 4 – Parallel streams
-
-```
-mininet> h1 iperf -c 10.0.0.5 -t 20 -P 4 &
-mininet> h2 iperf -c 10.0.0.6 -t 20 &
-```
-
-Observe aggregate utilization approaching link saturation.
-
----
-
-## Expected Output
-
-### REST API sample (`/stats/all`)
-
-```json
-{
-  "1": {
-    "1": {
-      "port": 1,
-      "tx_mbps": 3.421,
-      "rx_mbps": 2.985,
-      "tx_util_pct": 34.2,
-      "rx_util_pct": 29.9,
-      "tx_bytes": 1485320,
-      "rx_bytes": 1290440,
-      "tx_packets": 9870,
-      "rx_packets": 8540,
-      "tx_errors": 0,
-      "rx_errors": 0,
-      "timestamp": 1718000000.12
-    }
-  }
-}
-```
-
-### Flow table (after pingall)
-
-```
-cookie=0x0, duration=12s, table=0, n_packets=24, n_bytes=2016,
-  priority=1,in_port=1,dl_src=00:00:00:00:00:01,dl_dst=00:00:00:00:00:05
-  actions=output:3
-
-cookie=0x0, duration=60s, table=0, n_packets=0,
-  priority=0 actions=CONTROLLER:65535
-```
-
 ---
 
 ## Proof of Execution
 
-Screenshots and Wireshark captures are in `/proof/` on this repo:
+Screenshots are in `/Outputs/` on this repo:
 
-- `pingall_output.png` — 0% packet loss across all 6 hosts
-- `iperf_tcp.png` — TCP throughput h1→h5 (~9.5 Mbps)
-- `iperf_udp.png` — UDP throughput with jitter stats
-- `flow_table_s1.png` — `ovs-ofctl dump-flows s1` after learning
-- `wireshark_ofp.pcap` — captured OpenFlow messages (SYN, Features, FlowMod, StatsReply)
-- `dashboard.png` — live dashboard screenshot
-
+- `Mininet Topology Running.png` — Building topology and Adding controller, switches, hosts
+- `Pingall Results.png` — 0% dropped across all 6 hosts
+- `Flow table.png` — `ovs-ofctl dump-flows s1 & s2` Confirmation of unicast rules alonside permanent table-miss rule
+- `Iperf Running.png` — Mininet CLI after starting all six iperf commands
+- `REST API curl Response.png` — JSON response with non-zero tx_mbps and rx_mbps values while iperf is running
+- `Dashboard 1.png` `Dashboard 2.png`— Live dashboard screenshot
+- `Latency 1.png` `Latency 2.png` — Results between two host pairs with different path lengths
 ---
 
 ## Performance Metrics
 
-| Metric | Observed | Expected |
-|--------|----------|----------|
-| Ping RTT h1→h5 | ~5 ms | 2+2+1 ms links |
-| TCP throughput | ~9.5 Mbps | ≤10 Mbps |
-| Stats poll interval | 2 s | configurable |
-| Flow rule idle timeout | 30 s | per-flow |
-| Controller reaction time | <1 ms | local Mininet |
-
+| Host Pair | Path              | Configured Delays          | Expected RTT | Observed RTT                      | Status   |
+|-----------|-------------------|----------------------------|--------------|-----------------------------------|----------|
+| H3 → H5   | H3–S2–S1–S3–H5   | H→S: 2ms × 4, S→S: 1ms × 2 | ~20 ms       | avg 218.4 ms (min 209 / max 233)  | +198 ms  |
+| H1 → H2   | H1–S1–H2          | H→S: 2ms × 2, S→S: 0ms    | ~8 ms        | avg 2187.1 ms (min 1827 / max 2619) | +2179 ms |
+| H1–H6 (all) | Various via S1–S3 | Backbone: 1ms, Host: 2ms  | 8–20 ms      | 0% packet loss                    | reachable |
 ---
 
-## References
-
-1. Mininet documentation — https://mininet.org
-2. Ryu SDN framework — https://ryu-sdn.org
-3. OpenFlow 1.3 specification — https://opennetworking.org/wp-content/uploads/2014/10/openflow-spec-v1.3.0.pdf
-4. Open vSwitch documentation — https://docs.openvswitch.org
-5. "Software Defined Networks: A Comprehensive Approach" — Goransson & Black, 2014
-6. Ryu Book — https://osrg.github.io/ryu-book/en/html/
